@@ -9,33 +9,46 @@
     var PRICES_STRIPPED = window.BETTERESTECH_PRICES_NEED_LOAD || false;
     
     if (PRICES_STRIPPED) {
-        console.log('🎯 Price-stripped cache detected - will load ALL prices');
+        
     }
 
     var BASE_CACHE_KEY = 'wc_product_prices';
     var CACHE_DURATION = (typeof pricePrefetch !== 'undefined' ? pricePrefetch.cache_duration : 86400) * 1000;
     var isFetching = false;
 
-    // ===== CURRENCY DETECTION =====
-    function getCurrentCurrency() {
-        var cookieMatch = document.cookie.match(/user_currency=([A-Z]{3})/);
-        if (cookieMatch) {
-            return cookieMatch[1];
-        }
-        
-        if (typeof pricePrefetch !== 'undefined' && pricePrefetch.user_currency) {
-            return pricePrefetch.user_currency;
-        }
-        
-        var firstPrice = $('.woocommerce-Price-amount:not([data-price-placeholder]), .price').first().text();
-        if (firstPrice) {
-            if (firstPrice.indexOf('₹') !== -1) return 'INR';
-            if (firstPrice.indexOf('€') !== -1) return 'EUR';
-            if (firstPrice.indexOf('£') !== -1) return 'GBP';
-        }
-        
-        return 'USD';
+    // ===== CURRENCY DETECTION (FIXED) =====
+function getCurrentCurrency() {
+    // STEP 1: Check cookie first (most reliable)
+    var cookieMatch = document.cookie.match(/user_currency=([A-Z]{3})/);
+    if (cookieMatch) {
+        return cookieMatch[1];
     }
+    
+    // STEP 2: Check PHP-localized value (server-detected on THIS request)
+    if (typeof pricePrefetch !== 'undefined' && pricePrefetch.user_currency) {
+        var phpCurrency = pricePrefetch.user_currency;
+       
+        
+        // Set cookie for next time
+        var expires = new Date(Date.now() + 30*24*60*60*1000).toUTCString();
+        document.cookie = 'user_currency=' + phpCurrency + '; expires=' + expires + '; path=/';
+        
+        return phpCurrency;
+    }
+    
+    // STEP 3: Fallback - detect from existing prices
+    var firstPrice = $('.woocommerce-Price-amount:not([data-price-placeholder]), .price').first().text();
+    if (firstPrice) {
+        if (firstPrice.indexOf('₹') !== -1) {
+            return 'INR';
+        }
+        if (firstPrice.indexOf('€') !== -1) return 'EUR';
+        if (firstPrice.indexOf('£') !== -1) return 'GBP';
+    }
+    
+    return 'USD';
+}
+
 
     function getCacheKey() {
         return BASE_CACHE_KEY + '_' + getCurrentCurrency();
@@ -69,13 +82,12 @@
     // ===== PRICE FETCHER =====
     function fetchPricesAsync(callback) {
         if (isFetching) {
-            console.log('⏳ Already fetching prices...');
             return;
         }
         
         isFetching = true;
         var currency = getCurrentCurrency();
-        console.log('📡 Fetching prices for: ' + currency);
+    
         
         $.ajax({
             url: pricePrefetch.ajax_url,
@@ -89,7 +101,6 @@
                 isFetching = false;
                 
                 if (response.success && response.data && response.data.prices) {
-                    console.log('✅ Fetched ' + Object.keys(response.data.prices).length + ' prices');
 
                     var cacheData = {
                         prices: response.data.prices,
@@ -100,11 +111,9 @@
                     };
                     
                     localStorage.setItem(getCacheKey(), JSON.stringify(cacheData));
-                    console.log('💾 Prices cached');
                     
                     if (callback) callback(response.data.prices);
                 } else {
-                    console.error('❌ Invalid response');
                     if (callback) callback(null);
                 }
             },
@@ -113,7 +122,7 @@
                 console.error('❌ AJAX error');
                 if (callback) callback(null);
             },
-            timeout: 30000
+            timeout: 5000
         });
     }
 
@@ -142,12 +151,9 @@
         
         return '$';
     }
-
-    // ===== PRICE APPLICATION =====
     // ===== PRICE APPLICATION =====
 function applyPrices(prices) {
     if (!prices) {
-        console.warn('⚠️ No prices to apply');
         return;
     }
     
@@ -246,48 +252,43 @@ function applyPrices(prices) {
             applied++;
         }
     });
-    
-    console.log('✨ Applied ' + applied + ' prices in ' + currency);
 }
 
 
-    // ===== MAIN LOGIC =====
-    function loadPrices() {
-        var currency = getCurrentCurrency();
-        var cached = getCachedPrices();
-        
-        // HIDE all price placeholders immediately
-        $('[data-price-placeholder]').css('visibility', 'hidden');
-        
-        // ✅ NEW: Check cache FIRST - if valid, use it immediately (like sidecart)
-        if (cached && !isCacheExpired(cached) && cached.currency === currency) {
-            console.log('⚡ Using cached prices instantly!');
-            applyPrices(cached.prices);
-            return; // ← Don't fetch again!
-        }
-        
-        // Only fetch if no cache or expired
-        if (PRICES_STRIPPED || !cached || isCacheExpired(cached) || cached.currency !== currency) {
-            fetchPricesAsync(function(prices) {
-                if (prices) {
-                    applyPrices(prices);
-                } else {
-                    $('[data-price-placeholder]').css('visibility', 'visible');
-                }
-            });
-        }
+ // ===== MAIN LOGIC (FIXED) =====
+function loadPrices() {
+    
+    $('[data-price-placeholder]').css('visibility', 'hidden');
+    
+    // ✅ NO setTimeout - execute immediately
+    var currency = getCurrentCurrency();
+    var cached = getCachedPrices();
+    
+    if (cached && !isCacheExpired(cached) && cached.currency === currency) {
+        applyPrices(cached.prices);
+        return;
     }
+    
+    if (PRICES_STRIPPED || !cached || isCacheExpired(cached) || cached.currency !== currency) {
+        fetchPricesAsync(function(prices) {
+            if (prices) {
+                applyPrices(prices);
+            } else {
+                $('[data-price-placeholder]').css('visibility', 'visible');
+            }
+        });
+    }
+}
+
 
     // ===== INITIALIZATION =====
     $(document).ready(function() {
-        console.log('🚀 Price loader initialized');
         
         // Always load prices on page load
         loadPrices();
         
         // Also watch for AJAX product additions (infinite scroll, etc.)
         $(document).on('yith_infs_added_elem', function() {
-            console.log('🔄 New products added - reapplying prices');
             setTimeout(function() {
                 var cached = getCachedPrices();
                 if (cached && cached.prices) {
@@ -316,6 +317,9 @@ function applyPrices(prices) {
         var converted = 0;
         
         var priceContainers = [
+                '.wfacp_order_summary_item_total',  // ✅ ADD - Product line item
+    'td.product-total',                  // ✅ ADD - Product total cell
+    '.product-total',
             '.fkcart-item-price',
             '.fkcart-totals',
             '.fkcart-subtotal',
@@ -331,6 +335,10 @@ function applyPrices(prices) {
             '.cart-subtotal',
             '.order-total',
             '.woocommerce-checkout-review-order'
+            '.wfacp_order_summary', 
+            '.wfacp_mini_cart_items',        // ← ADD THESE
+            '.wfacp_order_total_wrap',       // ← ADD THESE
+            '.wfacp-product-switch-panel'    // ← ADD THESE
         ].join(', ');
         
         var $containers = $(priceContainers);
@@ -343,11 +351,15 @@ function applyPrices(prices) {
                 return;
             }
             
-            var inTitle = $elem.closest('.fkcart-item-title-price, .fkcart-item-title, .product-name, a[href*="product"]').length > 0;
-            
-            if (inTitle) {
-                return;
-            }
+// ✅ UPDATED: Skip product names but NOT prices in product-total
+var inTitle = $elem.closest('.fkcart-item-title-price, .fkcart-item-title, .wfacp_order_summary_item_name, a[href*="product"]').length > 0;
+var inProductTotal = $elem.closest('.wfacp_order_summary_item_total, .product-total, td.product-total').length > 0;
+
+// Skip titles, but allow product totals
+if (inTitle && !inProductTotal) {
+    return;
+}
+
             
             var currentSymbol = detectPriceSymbol($elem);
             
@@ -393,9 +405,10 @@ function applyPrices(prices) {
             setTimeout(checkCacheAndConvert, 100);
         });
         
-        setTimeout(checkCacheAndConvert, 500);
-        setTimeout(checkCacheAndConvert, 2000);
-        setTimeout(checkCacheAndConvert, 4000);
+setTimeout(checkCacheAndConvert, 500);
+setTimeout(checkCacheAndConvert, 1500);  // ✅ Changed from 2000 to 1500
+// ✅ REMOVED: setTimeout(checkCacheAndConvert, 4000);
+
         
         $(document).on('click', '.fkcart-cart-btn, .cart-link, .header-cart-link', function() {
             setTimeout(checkCacheAndConvert, 300);
@@ -423,5 +436,354 @@ function applyPrices(prices) {
             });
         }
     });
+    // ===== FUNNELKIT CHECKOUT CONVERSION =====
+$(document).ready(function() {
+    // Detect FunnelKit checkout
+    if ($('body').hasClass('wfacp_main_wrapper') || 
+        $('.wfacp-form').length > 0 || 
+        $('.wfacp_main_form').length > 0 ||
+        $('body').hasClass('wfacp_funnel_cart')) {    
+      var convertFunnelKitPrices = function() {
+            var cached = getCachedPrices();
+            if (!cached || !cached.prices) {
+                return;
+            }
+            
+            var rate = cached.rate || 1;
+            var targetSymbol = cached.symbol || '$';
+            var currency = getCurrentCurrency();
+            
+            if (currency === 'USD' || rate === 1) {
+                return;
+            }
+            
+            var converted = 0;
+            
+
+// ✅ UPDATED: FunnelKit-specific selectors (product prices first)
+var fkSelectors = [
+    '.wfacp_order_summary_item_total',  // ✅ Product line item prices (FIRST!)
+    '.product-total',                    // ✅ Product total container
+    'td.product-total',                  // ✅ Table cell for product total
+    '.wfacp_order_summary',
+    '.wfacp_mini_cart_items',
+    '.wfacp-product-switch-panel',
+    '.wfacp_order_total_wrap',
+    '.wfacp_row_wrap',
+    '.wfacp-cart-total',
+    '.wfacp-product-row',
+    '.wfacp_product_row',
+    '.wfacp_order_total',
+    '.wfacp_mini_cart_footer',
+    '.wfacp_subtotal',
+    '.wfacp_shipping',
+    '.wfacp_tax',
+    '.wfacp_order_review',
+    '.wfacp-order-summary',
+    '.order_review',
+    '.cart-subtotal',                    // ✅ Subtotal row
+    '.order-total',                      // ✅ Total row
+    'table.shop_table',
+    '#order_review'
+].join(', ');
+
+            
+            $(fkSelectors).find('.woocommerce-Price-amount, .amount, bdi').each(function() {
+                var $elem = $(this);
+                
+                // Skip if already converted
+                if ($elem.data('converted') === currency) {
+                    return;
+                }
+                
+// ✅ UPDATED: Skip product names/titles but NOT prices
+if ($elem.closest('.wfacp_order_summary_item_name, .product-name, .product-quantity, a[href*="product"]').length > 0) {
+    return;
+}
+
+// ✅ EXPLICITLY ALLOW: Product line item prices
+if ($elem.closest('.wfacp_order_summary_item_total, .product-total, td.product-total').length > 0) {
+    // Don't skip - this is a price we WANT to convert
+}
+
+                
+                // Get current symbol
+                var currentSymbol = detectPriceSymbol($elem);
+                
+                // Only convert USD prices
+                if (currentSymbol !== '$') {
+                    return;
+                }
+                
+// ✅ ENHANCED: Extract numeric value (handles <bdi> properly)
+var priceText = '';
+
+// Check if element has <bdi> child
+var $bdi = $elem.find('bdi').first();
+if ($bdi.length > 0) {
+    priceText = $bdi.text();
+} else {
+    priceText = $elem.text();
+}
+
+// Clean and parse
+priceText = priceText.replace(/[^\d.]/g, '');
+var priceValue = parseFloat(priceText);
+
+if (isNaN(priceValue) || priceValue === 0) {
+    return;
+}
+
+// Convert
+var convertedPrice = Math.round(priceValue * rate);
+
+// ✅ ENHANCED: Update HTML (preserves <bdi> if it exists)
+var newHTML = '<span class="woocommerce-Price-currencySymbol">' + targetSymbol + '</span>' + convertedPrice;
+
+if ($bdi.length > 0) {
+    // If <bdi> exists, update its content only
+    $bdi.empty().html(newHTML);
+} else {
+    // Otherwise update the element itself
+    $elem.empty().html(newHTML);
+}
+
+                $elem.data('converted', currency);
+                converted++;
+            });
+            
+            if (converted > 0) {
+            }
+        };
+        
+        // Initial conversion (multiple attempts)
+setTimeout(convertFunnelKitPrices, 500);
+setTimeout(convertFunnelKitPrices, 1500);
+        
+        // FunnelKit-specific events
+        $(document.body).on('wfacp_step_switching wfacp_coupon_form_update wfacp_order_review_update', function() {
+            setTimeout(convertFunnelKitPrices, 300);
+        });
+        
+        // Standard WooCommerce events
+        $(document.body).on('updated_checkout payment_method_selected', function() {
+            setTimeout(convertFunnelKitPrices, 300);
+        });
+        
+        // Watch for payment method changes
+        $(document).on('change', 'input[name="payment_method"]', function() {
+            setTimeout(convertFunnelKitPrices, 200);
+        });
+        
+        // Watch for coupon apply/remove
+        $(document).on('click', '.wfacp_apply_coupon, .wfacp_remove_coupon', function() {
+            setTimeout(convertFunnelKitPrices, 1000);
+        });
+        
+        // MutationObserver for dynamic content
+        if (window.MutationObserver) {
+            var fkObserver = new MutationObserver(function(mutations) {
+                var shouldConvert = false;
+                mutations.forEach(function(mutation) {
+                    if (mutation.addedNodes.length > 0 || mutation.type === 'characterData') {
+                        $(mutation.target).find('.woocommerce-Price-amount, .amount').each(function() {
+                            if (!$(this).data('converted')) {
+                                shouldConvert = true;
+                            }
+                        });
+                    }
+                });
+                
+                if (shouldConvert) {
+                    setTimeout(convertFunnelKitPrices, 200);
+                }
+            });
+            
+            // Observe FunnelKit containers
+            $('.wfacp_order_summary, .wfacp_mini_cart_items, #order_review').each(function() {
+                fkObserver.observe(this, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true
+                });
+            });
+        }
+    }
+});
+// ===== ENHANCED FUNNELKIT CHECKOUT CONVERSION (HANDLES ALL ELEMENTS) =====
+$(document).ready(function() {
+    // Detect FunnelKit checkout
+    if ($('body').hasClass('wfacp_main_wrapper') || 
+        $('.wfacp-form').length > 0 || 
+        $('.wfacp_main_form').length > 0 ||
+        $('.wfacp_order_summary').length > 0) {
+        
+        var convertAllCheckoutPrices = function() {
+            var cached = getCachedPrices();
+            if (!cached || !cached.prices) {
+                console.log('❌ No cached prices available');
+                return;
+            }
+            
+            var rate = cached.rate || 1;
+            var targetSymbol = cached.symbol || '$';
+            var currency = getCurrentCurrency();
+            
+            if (currency === 'USD' || rate === 1) {
+                console.log('⏭️ Currency is USD, skipping conversion');
+                return;
+            }
+            
+            var converted = 0;
+            
+            // ===== 1. CONVERT STANDARD PRICE ELEMENTS =====
+            var priceSelectors = [
+                '.wfacp_order_summary_item_total .woocommerce-Price-amount',
+                'td.product-total .woocommerce-Price-amount',
+                '.cart-subtotal .woocommerce-Price-amount',
+                '.order-total .woocommerce-Price-amount',
+                '.wfacp_order_summary .woocommerce-Price-amount',
+                'table.shop_table .woocommerce-Price-amount'
+            ].join(', ');
+            
+            $(priceSelectors).each(function() {
+                var $elem = $(this);
+                
+                // Skip if already converted
+                if ($elem.data('fk-converted') === currency) {
+                    return;
+                }
+                
+                // Skip product names
+                if ($elem.closest('.product-name, .wfacp_order_summary_item_name').length > 0) {
+                    return;
+                }
+                
+                // Extract price from <bdi> or direct text
+                var priceText = '';
+                var $bdi = $elem.find('bdi').first();
+                
+                if ($bdi.length > 0) {
+                    priceText = $bdi.text();
+                } else {
+                    priceText = $elem.text();
+                }
+                
+                // Clean and parse
+                priceText = priceText.replace(/[^\d.]/g, '');
+                var priceValue = parseFloat(priceText);
+                
+                if (isNaN(priceValue) || priceValue === 0) {
+                    return;
+                }
+                
+                // Check if it's USD (has $ symbol)
+                var hasUSD = ($elem.text().indexOf('$') !== -1);
+                if (!hasUSD) {
+                    return; // Already converted
+                }
+                
+                // Convert
+                var convertedPrice = Math.round(priceValue * rate);
+                var newHTML = '<span class="woocommerce-Price-currencySymbol">' + targetSymbol + '</span>' + convertedPrice;
+                
+                // Update
+                if ($bdi.length > 0) {
+                    $bdi.empty().html(newHTML);
+                } else {
+                    $elem.empty().html(newHTML);
+                }
+                
+                $elem.data('fk-converted', currency);
+                converted++;
+            });
+            
+            // ===== 2. CONVERT PLACE ORDER BUTTON =====
+            var $placeOrderBtn = $('#place_order, button[name="woocommerce_checkout_place_order"]');
+            
+            if ($placeOrderBtn.length > 0 && $placeOrderBtn.data('btn-converted') !== currency) {
+                var btnText = $placeOrderBtn.text();
+                var btnValue = $placeOrderBtn.val();
+                
+                // Extract price from button text
+                var priceMatch = btnText.match(/\$(\d+(?:\.\d+)?)/);
+                
+                if (priceMatch) {
+                    var btnPrice = parseFloat(priceMatch[1]);
+                    var convertedBtnPrice = Math.round(btnPrice * rate);
+                    
+                    // Update button text
+                    var newBtnText = btnText.replace(/\$\d+(?:\.\d+)?/, targetSymbol + convertedBtnPrice);
+                    $placeOrderBtn.text(newBtnText);
+                    
+                    // Update button value (if it has price)
+                    if (btnValue && btnValue.indexOf('$') !== -1) {
+                        var newBtnValue = btnValue.replace(/\$\d+(?:\.\d+)?/, targetSymbol + convertedBtnPrice);
+                        $placeOrderBtn.val(newBtnValue).attr('data-value', newBtnValue);
+                    }
+                    
+                    $placeOrderBtn.data('btn-converted', currency);
+                    converted++;
+                }
+            }
+            
+            if (converted > 0) {
+                console.log('✅ FunnelKit: Converted ' + converted + ' prices to ' + currency);
+            } else {
+                console.log('⚠️ FunnelKit: Found 0 prices to convert (might already be converted)');
+            }
+        };
+        
+        // ===== TIMING: Multiple attempts =====
+        setTimeout(convertAllCheckoutPrices, 300);
+        setTimeout(convertAllCheckoutPrices, 1000);
+        setTimeout(convertAllCheckoutPrices, 2000);
+        
+        // ===== EVENTS: Checkout updates =====
+        $(document.body).on('updated_checkout wfacp_order_review_update payment_method_selected', function() {
+            setTimeout(convertAllCheckoutPrices, 500);
+        });
+        
+        // ===== EVENTS: Coupon/payment changes =====
+        $(document).on('change', 'input[name="payment_method"]', function() {
+            setTimeout(convertAllCheckoutPrices, 300);
+        });
+        
+        $(document).on('click', '.wfacp_apply_coupon, .wfacp_remove_coupon', function() {
+            setTimeout(convertAllCheckoutPrices, 1500);
+        });
+        
+        // ===== OBSERVER: Watch for dynamic updates =====
+        if (window.MutationObserver) {
+            var checkoutObserver = new MutationObserver(function(mutations) {
+                var shouldConvert = false;
+                
+                mutations.forEach(function(mutation) {
+                    // Check if prices were updated
+                    $(mutation.target).find('.woocommerce-Price-amount, #place_order').each(function() {
+                        if (!$(this).data('fk-converted') && !$(this).data('btn-converted')) {
+                            shouldConvert = true;
+                        }
+                    });
+                });
+                
+                if (shouldConvert) {
+                    setTimeout(convertAllCheckoutPrices, 300);
+                }
+            });
+            
+            // Observe checkout container
+            var $checkoutContainer = $('.wfacp_order_summary, #order_review, .woocommerce-checkout');
+            $checkoutContainer.each(function() {
+                checkoutObserver.observe(this, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true
+                });
+            });
+        }
+    }
+});
+
 
 })(jQuery);
