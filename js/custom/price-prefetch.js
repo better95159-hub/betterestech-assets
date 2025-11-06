@@ -67,52 +67,56 @@
 
     // ===== PRICE FETCHER =====
     function fetchPricesAsync(callback) {
-    if (isFetching) {
-        return;
-    }
-    
-    isFetching = true;
-    var currency = getCurrentCurrency();
-    
-    // ✅ NEW: Fetch from GitHub Pages (FAST!)
-    $.ajax({
-        url: 'https://better95159-hub.github.io/betterestech-prices/prices.json',
-        type: 'GET',
-        dataType: 'json',
-        cache: true,  // Browser caches it!
-        success: function(response) {
+        if (isFetching) {
+            return;
+        }
+        
+        isFetching = true;
+        var currency = getCurrentCurrency();
+        
+        if (typeof pricePrefetch === 'undefined') {
+            console.error('❌ Price prefetch error: Configuration missing');
             isFetching = false;
-            
-            // Get data for user's currency
-            if (response && response[currency]) {
-                var currencyData = response[currency];
-                
-                // Cache the data
-                var cacheData = {
-                    prices: currencyData.prices,
-                    currency: currencyData.currency,
-                    symbol: currencyData.symbol,
-                    rate: currencyData.rate,  // ← INCLUDES RATE!
-                    timestamp: Date.now()
-                };
-                
-                localStorage.setItem(getCacheKey(), JSON.stringify(cacheData));
-                
-                if (callback) callback(currencyData.prices);
-            } else {
-                console.error('Currency not found:', currency);
-                if (callback) callback(null);
-            }
-        },
-        error: function(xhr, status, error) {
-            isFetching = false;
-            console.error('❌ GitHub fetch error:', status, error);
             if (callback) callback(null);
-        },
-        timeout: 5000
-    });
-}
-
+            return;
+        }
+        
+        $.ajax({
+            url: pricePrefetch.ajax_url,
+            type: 'POST',
+            data: {
+                action: 'prefetch_all_prices',
+                security: pricePrefetch.nonce,
+                currency: currency
+            },
+            success: function(response) {
+                isFetching = false;
+                
+                if (response.success && response.data && response.data.prices) {
+                    var cacheData = {
+                        prices: response.data.prices,
+                        currency: response.data.user_currency || currency,
+                        symbol: response.data.symbol || '$',
+                        rate: response.data.rate || 1,
+                        timestamp: Date.now()
+                    };
+                    
+                    localStorage.setItem(getCacheKey(), JSON.stringify(cacheData));
+                    
+                    if (callback) callback(response.data.prices);
+                } else {
+                    console.error('❌ Invalid price data received');
+                    if (callback) callback(null);
+                }
+            },
+            error: function(xhr, status, error) {
+                isFetching = false;
+                console.error('❌ Price fetch failed:', status);
+                if (callback) callback(null);
+            },
+            timeout: 12000
+        });
+    }
 
     // Helper: Detect currency symbol
     function detectPriceSymbol($elem) {
