@@ -64,180 +64,167 @@
         var age = Date.now() - cached.timestamp;
         return age > CACHE_DURATION;
     }
+    // Helper: Detect currency symbol
+function detectPriceSymbol($elem) {
+    var symbolElem = $elem.find('.woocommerce-Price-currencySymbol');
+    if (symbolElem.length > 0) {
+        return symbolElem.text().trim();
+    }
+    
+    var fullText = $elem.text();
+    if (fullText.indexOf('$') !== -1) return '$';
+    if (fullText.indexOf('₹') !== -1) return '₹';
+    if (fullText.indexOf('€') !== -1) return '€';
+    if (fullText.indexOf('£') !== -1) return '£';
+    
+    return '$';
+}
+
+// ===== PRICE APPLICATION =====
+function applyPrices(prices) {
+    if (!prices) {
+        return;
+    }
+    
+    var applied = 0;
+    var currency = getCurrentCurrency();
+    var cached = getCachedPrices();
+    var rate = cached && cached.rate ? cached.rate : 1;
+    var targetSymbol = cached && cached.symbol ? cached.symbol : '$';
+    
+    $('[data-price-placeholder], .wc-price-prefetch, .price, .woocommerce-Price-amount').each(function() {
+        var $elem = $(this);
+        var productId = null;
+        
+        productId = $elem.data('product-id') || $elem.data('product_id');
+        
+        if (!productId && $('body').hasClass('single-product')) {
+            var bodyClasses = $('body').attr('class');
+            var bodyMatch = bodyClasses.match(/postid-(\d+)/);
+            if (bodyMatch) {
+                var isMainProduct = $elem.closest('.product, .summary, .entry-summary, .single-product-content').length > 0;
+                var isRelated = $elem.closest('.related, .upsells').length > 0;
+                
+                if (isMainProduct && !isRelated) {
+                    productId = parseInt(bodyMatch[1]);
+                }
+            }
+        }
+        
+        if (!productId) {
+            var $product = $elem.closest('[data-product_id]');
+            if ($product.length > 0) {
+                productId = $product.data('product_id');
+            }
+        }
+        
+        if (!productId) {
+            $product = $elem.closest('.product, li.product, .product-type-variable, .product-type-simple');
+            if ($product.length > 0) {
+                productId = $product.find('[data-product_id]').first().data('product_id');
+            }
+        }
+        
+        if (!productId) {
+            $product = $elem.closest('.product, li.product, body.single-product, body.product');
+            var classes = $product.attr('class') || '';
+            var match = classes.match(/post-(\d+)|product-(\d+)/);
+            if (match) {
+                productId = parseInt(match[1] || match[2]);
+            }
+        }
+        
+        if (productId && prices[productId]) {
+            var priceData = prices[productId];
+            var currentSymbol = detectPriceSymbol($elem);
+            
+            if (currentSymbol !== '$') {
+                return;
+            }
+            
+            var regularPrice = parseFloat(priceData.regular || 0);
+            var salePrice = parseFloat(priceData.sale || 0);
+            
+            if (currency !== 'USD' && rate > 0) {
+                regularPrice = Math.round(regularPrice * rate);
+                salePrice = salePrice ? Math.round(salePrice * rate) : 0;
+            }
+            
+            var priceHTML = '';
+            
+            if (salePrice > 0 && salePrice < regularPrice) {
+                priceHTML = '<del aria-hidden="true"><span class="woocommerce-Price-amount amount">' +
+                    '<span class="woocommerce-Price-currencySymbol">' + targetSymbol + '</span>' + regularPrice +
+                    '</span></del> ' +
+                    '<ins><span class="woocommerce-Price-amount amount">' +
+                    '<span class="woocommerce-Price-currencySymbol">' + targetSymbol + '</span>' + salePrice +
+                    '</span></ins>';
+            } else {
+                priceHTML = '<span class="woocommerce-Price-amount amount">' +
+                    '<span class="woocommerce-Price-currencySymbol">' + targetSymbol + '</span>' + regularPrice +
+                    '</span>';
+            }
+            
+            $elem.empty();
+            $elem.html(priceHTML);
+            $elem.removeClass('loading-price');
+            $elem.removeAttr('data-price-placeholder');
+            $elem.css('visibility', 'visible');
+            $elem.data('converted', currency);
+            applied++;
+        }
+    });
+}
+
 
     // ===== PRICE FETCHER =====
-    function fetchPricesAsync(callback) {
-        if (isFetching) {
-            return;
-        }
-        
-        isFetching = true;
-        var currency = getCurrentCurrency();
-        
-        if (typeof pricePrefetch === 'undefined') {
-            console.error('❌ Price prefetch error: Configuration missing');
+function fetchPricesAsync(callback) {
+    if (isFetching) {
+        return;
+    }
+    
+    isFetching = true;
+    var currency = getCurrentCurrency();
+    
+    // ✅ Fetch from GitHub Pages (FAST!)
+    $.ajax({
+        url: 'https://better95159-hub.github.io/betterestech-prices/prices.json',
+        type: 'GET',
+        dataType: 'json',
+        cache: true,
+        success: function(response) {
             isFetching = false;
-            if (callback) callback(null);
-            return;
-        }
-        
-        $.ajax({
-            url: pricePrefetch.ajax_url,
-            type: 'POST',
-            data: {
-                action: 'prefetch_all_prices',
-                security: pricePrefetch.nonce,
-                currency: currency
-            },
-            success: function(response) {
-                isFetching = false;
+            
+            // Get data for user's currency
+            if (response && response[currency]) {
+                var currencyData = response[currency];
                 
-                if (response.success && response.data && response.data.prices) {
-                    var cacheData = {
-                        prices: response.data.prices,
-                        currency: response.data.user_currency || currency,
-                        symbol: response.data.symbol || '$',
-                        rate: response.data.rate || 1,
-                        timestamp: Date.now()
-                    };
-                    
-                    localStorage.setItem(getCacheKey(), JSON.stringify(cacheData));
-                    
-                    if (callback) callback(response.data.prices);
-                } else {
-                    console.error('❌ Invalid price data received');
-                    if (callback) callback(null);
-                }
-            },
-            error: function(xhr, status, error) {
-                isFetching = false;
-                console.error('❌ Price fetch failed:', status);
+                // Cache the data
+                var cacheData = {
+                    prices: currencyData.prices,
+                    currency: currencyData.currency,
+                    symbol: currencyData.symbol,
+                    rate: currencyData.rate,
+                    timestamp: Date.now()
+                };
+                
+                localStorage.setItem(getCacheKey(), JSON.stringify(cacheData));
+                
+                if (callback) callback(currencyData.prices);
+            } else {
+                console.error('Currency not found:', currency);
                 if (callback) callback(null);
-            },
-            timeout: 12000
-        });
-    }
+            }
+        },
+        error: function(xhr, status, error) {
+            isFetching = false;
+            console.error('Failed to fetch from GitHub:', status, error);
+            if (callback) callback(null);
+        },
+        timeout: 5000
+    });
+}
 
-    // Helper: Detect currency symbol
-    function detectPriceSymbol($elem) {
-        var symbolElem = $elem.find('.woocommerce-Price-currencySymbol');
-        if (symbolElem.length > 0) {
-            return symbolElem.text().trim();
-        }
-        
-        var fullText = $elem.text();
-        if (fullText.indexOf('$') !== -1) return '$';
-        if (fullText.indexOf('₹') !== -1) return '₹';
-        if (fullText.indexOf('€') !== -1) return '€';
-        if (fullText.indexOf('£') !== -1) return '£';
-        if (fullText.indexOf('C$') !== -1) return 'C$';
-        if (fullText.indexOf('A$') !== -1) return 'A$';
-        if (fullText.indexOf('¥') !== -1) return '¥';
-        if (fullText.indexOf('₩') !== -1) return '₩';
-        if (fullText.indexOf('₽') !== -1) return '₽';
-        if (fullText.indexOf('₪') !== -1) return '₪';
-        if (fullText.indexOf('kr') !== -1) return 'kr';
-        if (fullText.indexOf('zł') !== -1) return 'zł';
-        if (fullText.indexOf('Fr') !== -1) return 'Fr';
-        
-        return '$';
-    }
-
-    // ===== PRICE APPLICATION =====
-    function applyPrices(prices) {
-        if (!prices) {
-            return;
-        }
-        
-        var applied = 0;
-        var currency = getCurrentCurrency();
-        var cached = getCachedPrices();
-        var rate = cached && cached.rate ? cached.rate : 1;
-        var targetSymbol = cached && cached.symbol ? cached.symbol : '$';
-        
-        $('[data-price-placeholder], .wc-price-prefetch, .price, .woocommerce-Price-amount').each(function() {
-            var $elem = $(this);
-            var productId = null;
-            
-            productId = $elem.data('product-id') || $elem.data('product_id');
-            
-            if (!productId && $('body').hasClass('single-product')) {
-                var bodyClasses = $('body').attr('class');
-                var bodyMatch = bodyClasses.match(/postid-(\d+)/);
-                if (bodyMatch) {
-                    var isMainProduct = $elem.closest('.product, .summary, .entry-summary, .single-product-content').length > 0;
-                    var isRelated = $elem.closest('.related, .upsells').length > 0;
-                    
-                    if (isMainProduct && !isRelated) {
-                        productId = parseInt(bodyMatch[1]);
-                    }
-                }
-            }
-            
-            if (!productId) {
-                var $product = $elem.closest('[data-product_id]');
-                if ($product.length > 0) {
-                    productId = $product.data('product_id');
-                }
-            }
-            
-            if (!productId) {
-                $product = $elem.closest('.product, li.product, .product-type-variable, .product-type-simple');
-                if ($product.length > 0) {
-                    productId = $product.find('[data-product_id]').first().data('product_id');
-                }
-            }
-            
-            if (!productId) {
-                $product = $elem.closest('.product, li.product, body.single-product, body.product');
-                var classes = $product.attr('class') || '';
-                var match = classes.match(/post-(\d+)|product-(\d+)/);
-                if (match) {
-                    productId = parseInt(match[1] || match[2]);
-                }
-            }
-            
-            if (productId && prices[productId]) {
-                var priceData = prices[productId];
-                var currentSymbol = detectPriceSymbol($elem);
-                
-                if (currentSymbol !== '$') {
-                    return;
-                }
-                
-                var regularPrice = parseFloat(priceData.regular || 0);
-                var salePrice = parseFloat(priceData.sale || 0);
-                
-                if (currency !== 'USD' && rate > 0) {
-                    regularPrice = Math.round(regularPrice * rate);
-                    salePrice = salePrice ? Math.round(salePrice * rate) : 0;
-                }
-                
-                var priceHTML = '';
-                
-                if (salePrice > 0 && salePrice < regularPrice) {
-                    priceHTML = '<del aria-hidden="true"><span class="woocommerce-Price-amount amount">' +
-                        '<span class="woocommerce-Price-currencySymbol">' + targetSymbol + '</span>' + regularPrice +
-                        '</span></del> ' +
-                        '<ins><span class="woocommerce-Price-amount amount">' +
-                        '<span class="woocommerce-Price-currencySymbol">' + targetSymbol + '</span>' + salePrice +
-                        '</span></ins>';
-                } else {
-                    priceHTML = '<span class="woocommerce-Price-amount amount">' +
-                        '<span class="woocommerce-Price-currencySymbol">' + targetSymbol + '</span>' + regularPrice +
-                        '</span>';
-                }
-                
-                $elem.empty();
-                $elem.html(priceHTML);
-                $elem.removeClass('loading-price');
-                $elem.removeAttr('data-price-placeholder');
-                $elem.css('visibility', 'visible');
-                $elem.data('converted', currency);
-                applied++;
-            }
-        });
-    }
 
     // ===== MAIN LOGIC =====
     function loadPrices() {
