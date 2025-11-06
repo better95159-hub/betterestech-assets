@@ -13,32 +13,37 @@
     var isFetching = false;
 
     // ===== CURRENCY DETECTION =====
-    function getCurrentCurrency() {
+   function getCurrentCurrency() {
+    // ✅ PRIORITY 1: Always use PHP-detected currency from server
+    if (typeof pricePrefetch !== 'undefined' && pricePrefetch.user_currency) {
+        var serverCurrency = pricePrefetch.user_currency;
+        
+        // ✅ Check if it differs from current cookie
         var cookieMatch = document.cookie.match(/user_currency=([A-Z]{3})/);
-        if (cookieMatch) {
-            return cookieMatch[1];
-        }
+        var currentCookie = cookieMatch ? cookieMatch[1] : null;
         
-        if (typeof pricePrefetch !== 'undefined' && pricePrefetch.user_currency) {
-            var phpCurrency = pricePrefetch.user_currency;
+        // ✅ If different, update cookie AND clear old cache
+        if (currentCookie !== serverCurrency) {
             var expires = new Date(Date.now() + 30*24*60*60*1000).toUTCString();
-            document.cookie = 'user_currency=' + phpCurrency + '; expires=' + expires + '; path=/';
-            return phpCurrency;
+            document.cookie = 'user_currency=' + serverCurrency + '; expires=' + expires + '; path=/';
+            
+            // Clear old cached prices
+            localStorage.removeItem(getCacheKey());
+            
+            console.log('✅ Currency detected by server: ' + serverCurrency);
         }
         
-        var firstPrice = $('.woocommerce-Price-amount:not([data-price-placeholder]), .price').first().text();
-        if (firstPrice) {
-            if (firstPrice.indexOf('₹') !== -1) return 'INR';
-            if (firstPrice.indexOf('€') !== -1) return 'EUR';
-            if (firstPrice.indexOf('£') !== -1) return 'GBP';
-        }
-        
-        return 'USD';
+        return serverCurrency;
     }
-
-    function getCacheKey() {
-        return BASE_CACHE_KEY + '_' + getCurrentCurrency();
+    
+    // FALLBACK: Cookie
+    var cookieMatch = document.cookie.match(/user_currency=([A-Z]{3})/);
+    if (cookieMatch) {
+        return cookieMatch[1];
     }
+    
+    return 'USD';
+}
 
     // ===== CACHE MANAGEMENT =====
     function getCachedPrices() {
@@ -221,7 +226,7 @@ function fetchPricesAsync(callback) {
             console.error('Failed to fetch from GitHub:', status, error);
             if (callback) callback(null);
         },
-        timeout: 5000
+        timeout: 20000
     });
 }
 
