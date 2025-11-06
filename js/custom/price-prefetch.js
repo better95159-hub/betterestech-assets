@@ -12,38 +12,44 @@
     var CACHE_DURATION = (typeof pricePrefetch !== 'undefined' ? pricePrefetch.cache_duration : 86400) * 1000;
     var isFetching = false;
 
-    // ===== CURRENCY DETECTION =====
-   function getCurrentCurrency() {
-    // ✅ PRIORITY 1: Always use PHP-detected currency from server
-    if (typeof pricePrefetch !== 'undefined' && pricePrefetch.user_currency) {
-        var serverCurrency = pricePrefetch.user_currency;
-        
-        // ✅ Check if it differs from current cookie
-        var cookieMatch = document.cookie.match(/user_currency=([A-Z]{3})/);
-        var currentCookie = cookieMatch ? cookieMatch[1] : null;
-        
-        // ✅ If different, update cookie AND clear old cache
-        if (currentCookie !== serverCurrency) {
-            var expires = new Date(Date.now() + 30*24*60*60*1000).toUTCString();
-            document.cookie = 'user_currency=' + serverCurrency + '; expires=' + expires + '; path=/';
+        // ===== CURRENCY DETECTION =====
+    function getCurrentCurrency() {
+        // ✅ PRIORITY 1: Always use PHP-detected currency from server
+        if (typeof pricePrefetch !== 'undefined' && pricePrefetch.user_currency) {
+            var serverCurrency = pricePrefetch.user_currency;
             
-            // Clear old cached prices
-            localStorage.removeItem(getCacheKey());
+            // ✅ Check if it differs from current cookie
+            var cookieMatch = document.cookie.match(/user_currency=([A-Z]{3})/);
+            var currentCookie = cookieMatch ? cookieMatch[1] : null;
             
-            console.log('✅ Currency detected by server: ' + serverCurrency);
+            // ✅ If different, update cookie AND clear old cache
+            if (currentCookie && currentCookie !== serverCurrency) {
+                var expires = new Date(Date.now() + 30*24*60*60*1000).toUTCString();
+                document.cookie = 'user_currency=' + serverCurrency + '; expires=' + expires + '; path=/';
+                
+                // ✅ FIXED: Build cache key inline (no function call)
+                var oldCacheKey = BASE_CACHE_KEY + '_' + currentCookie;
+                localStorage.removeItem(oldCacheKey);
+                
+                console.log('✅ Currency changed: ' + currentCookie + ' → ' + serverCurrency);
+            }
+            
+            return serverCurrency;
         }
         
-        return serverCurrency;
+        // FALLBACK: Cookie
+        var cookieMatch = document.cookie.match(/user_currency=([A-Z]{3})/);
+        if (cookieMatch) {
+            return cookieMatch[1];
+        }
+        
+        return 'USD';
     }
     
-    // FALLBACK: Cookie
-    var cookieMatch = document.cookie.match(/user_currency=([A-Z]{3})/);
-    if (cookieMatch) {
-        return cookieMatch[1];
+    // ✅ NEW: Define getCacheKey function
+    function getCacheKey() {
+        return BASE_CACHE_KEY + '_' + getCurrentCurrency();
     }
-    
-    return 'USD';
-}
 
     // ===== CACHE MANAGEMENT =====
     function getCachedPrices() {
@@ -88,8 +94,11 @@ function detectPriceSymbol($elem) {
 // ===== PRICE APPLICATION =====
 function applyPrices(prices) {
     if (!prices) {
+        console.error('❌ applyPrices: No prices provided');
         return;
     }
+    
+    console.log('✅ applyPrices: Starting with', Object.keys(prices).length, 'products');
     
     var applied = 0;
     var currency = getCurrentCurrency();
@@ -97,7 +106,9 @@ function applyPrices(prices) {
     var rate = cached && cached.rate ? cached.rate : 1;
     var targetSymbol = cached && cached.symbol ? cached.symbol : '$';
     
-    $('[data-price-placeholder], .wc-price-prefetch, .price, .woocommerce-Price-amount').each(function() {
+    console.log('Currency:', currency, '| Rate:', rate, '| Symbol:', targetSymbol);
+    
+    $('[data-price-placeholder], .wc-price-prefetch').each(function() {
         var $elem = $(this);
         var productId = null;
         
@@ -141,11 +152,6 @@ function applyPrices(prices) {
         
         if (productId && prices[productId]) {
             var priceData = prices[productId];
-            var currentSymbol = detectPriceSymbol($elem);
-            
-            if (currentSymbol !== '$') {
-                return;
-            }
             
             var regularPrice = parseFloat(priceData.regular || 0);
             var salePrice = parseFloat(priceData.sale || 0);
@@ -177,8 +183,16 @@ function applyPrices(prices) {
             $elem.css('visibility', 'visible');
             $elem.data('converted', currency);
             applied++;
+            
+            if (applied <= 3) {
+                console.log('✅ Applied price for product', productId, ':', priceHTML);
+            }
+        } else if (productId) {
+            console.warn('⚠️ No price data for product', productId);
         }
     });
+    
+    console.log('✅ Total prices applied:', applied);
 }
 
 
@@ -223,7 +237,8 @@ function fetchPricesAsync(callback) {
         },
         error: function(xhr, status, error) {
             isFetching = false;
-            console.error('Failed to fetch from GitHub:', status, error);
+            console.error('❌ GitHub fetch error:', status, error);
+            console.error('Response:', xhr.responseText);
             if (callback) callback(null);
         },
         timeout: 20000
@@ -560,3 +575,4 @@ function fetchPricesAsync(callback) {
     });
 
 })(jQuery);
+
