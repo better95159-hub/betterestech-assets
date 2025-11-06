@@ -438,14 +438,16 @@
                 
                 var converted = 0;
                 
-                var priceSelectors = [
-                    '.wfacp_order_summary_item_total .woocommerce-Price-amount',
-                    'td.product-total .woocommerce-Price-amount',
-                    '.cart-subtotal .woocommerce-Price-amount',
-                    '.order-total .woocommerce-Price-amount',
-                    '.wfacp_order_summary .woocommerce-Price-amount',
-                    'table.shop_table .woocommerce-Price-amount'
-                ].join(', ');
+var priceSelectors = [
+    '.wfacp_order_summary_item_total .woocommerce-Price-amount',
+    'td.product-total .woocommerce-Price-amount',
+    '.cart-subtotal .woocommerce-Price-amount',
+    '.order-total .woocommerce-Price-amount',
+    '.wfacp_order_summary .woocommerce-Price-amount',
+    'table.shop_table .woocommerce-Price-amount',
+    '.wfacp_show_price_wrap .woocommerce-Price-amount' // ✅ NEW: Mobile order summary
+].join(', ');
+
                 
                 $(priceSelectors).each(function() {
                     var $elem = $(this);
