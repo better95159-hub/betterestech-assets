@@ -65,21 +65,31 @@
         return age > CACHE_DURATION;
     }
 
-    // ===== PRICE FETCHER =====
+    // ===== PRICE FETCHER (WITH DEBUG) =====
     function fetchPricesAsync(callback) {
         if (isFetching) {
+            console.log('⏳ Already fetching...');
             return;
         }
         
         isFetching = true;
         var currency = getCurrentCurrency();
         
+        // ✅ VERIFY pricePrefetch object exists
         if (typeof pricePrefetch === 'undefined') {
-            console.error('❌ Price prefetch error: Configuration missing');
+            console.error('❌ pricePrefetch object NOT DEFINED!');
+            console.error('wp_localize_script failed or script loaded incorrectly');
             isFetching = false;
             if (callback) callback(null);
             return;
         }
+        
+        console.log('═══════════════════════════════');
+        console.log('📡 AJAX REQUEST START');
+        console.log('Currency:', currency);
+        console.log('URL:', pricePrefetch.ajax_url);
+        console.log('Nonce:', pricePrefetch.nonce ? 'Present' : 'MISSING');
+        console.log('═══════════════════════════════');
         
         $.ajax({
             url: pricePrefetch.ajax_url,
@@ -92,7 +102,12 @@
             success: function(response) {
                 isFetching = false;
                 
+                console.log('✅ AJAX SUCCESS');
+                console.log('Response:', response);
+                
                 if (response.success && response.data && response.data.prices) {
+                    console.log('✅ Got', Object.keys(response.data.prices).length, 'prices');
+
                     var cacheData = {
                         prices: response.data.prices,
                         currency: response.data.user_currency || currency,
@@ -102,19 +117,42 @@
                     };
                     
                     localStorage.setItem(getCacheKey(), JSON.stringify(cacheData));
+                    console.log('💾 Cached successfully');
                     
                     if (callback) callback(response.data.prices);
                 } else {
-                    console.error('❌ Invalid price data received');
+                    console.error('❌ Invalid response format:', response);
                     if (callback) callback(null);
                 }
             },
             error: function(xhr, status, error) {
                 isFetching = false;
-                console.error('❌ Price fetch failed:', status);
+                
+                console.log('═══════════════════════════════');
+                console.error('❌ AJAX ERROR:');
+                console.error('Status:', status);
+                console.error('Error:', error);
+                console.error('HTTP Code:', xhr.status);
+                console.error('Response:', xhr.responseText);
+                console.log('═══════════════════════════════');
+                
+                // Specific error messages
+                if (xhr.status === 0) {
+                    console.error('⚠️ REQUEST BLOCKED/TIMEOUT - Check network or increase timeout');
+                } else if (xhr.status === 403) {
+                    console.error('⚠️ NONCE FAILED - Check security token');
+                } else if (xhr.status === 404) {
+                    console.error('⚠️ ENDPOINT NOT FOUND - Check admin-ajax.php');
+                } else if (xhr.status === 500) {
+                    console.error('⚠️ SERVER ERROR - Check PHP logs');
+                }
+                
                 if (callback) callback(null);
             },
-            timeout: 8000
+            timeout: 10000,  // 10 seconds
+            beforeSend: function() {
+                console.log('🚀 Sending request...');
+            }
         });
     }
 
@@ -130,15 +168,6 @@
         if (fullText.indexOf('₹') !== -1) return '₹';
         if (fullText.indexOf('€') !== -1) return '€';
         if (fullText.indexOf('£') !== -1) return '£';
-        if (fullText.indexOf('C$') !== -1) return 'C$';
-        if (fullText.indexOf('A$') !== -1) return 'A$';
-        if (fullText.indexOf('¥') !== -1) return '¥';
-        if (fullText.indexOf('₩') !== -1) return '₩';
-        if (fullText.indexOf('₽') !== -1) return '₽';
-        if (fullText.indexOf('₪') !== -1) return '₪';
-        if (fullText.indexOf('kr') !== -1) return 'kr';
-        if (fullText.indexOf('zł') !== -1) return 'zł';
-        if (fullText.indexOf('Fr') !== -1) return 'Fr';
         
         return '$';
     }
@@ -146,6 +175,7 @@
     // ===== PRICE APPLICATION =====
     function applyPrices(prices) {
         if (!prices) {
+            console.warn('⚠️ No prices to apply');
             return;
         }
         
@@ -237,6 +267,8 @@
                 applied++;
             }
         });
+        
+        console.log('✨ Applied', applied, 'prices in', currency);
     }
 
     // ===== MAIN LOGIC =====
@@ -247,6 +279,7 @@
         var cached = getCachedPrices();
         
         if (cached && !isCacheExpired(cached) && cached.currency === currency) {
+            console.log('⚡ Using cached prices');
             applyPrices(cached.prices);
             return;
         }
@@ -256,6 +289,7 @@
                 if (prices) {
                     applyPrices(prices);
                 } else {
+                    console.warn('⚠️ Failed to fetch prices, showing placeholders');
                     $('[data-price-placeholder]').css('visibility', 'visible');
                 }
             });
@@ -264,6 +298,15 @@
 
     // ===== INITIALIZATION =====
     $(document).ready(function() {
+        console.log('🎯 Price Prefetch initialized');
+        
+        // ✅ CHECK: Verify pricePrefetch object
+        if (typeof pricePrefetch === 'undefined') {
+            console.error('❌ CRITICAL: pricePrefetch not defined!');
+        } else {
+            console.log('✅ pricePrefetch object OK');
+        }
+        
         loadPrices();
         
         $(document).on('yith_infs_added_elem', function() {
@@ -372,11 +415,11 @@
             setTimeout(checkCacheAndConvert, 100);
         });
         
-        setTimeout(checkCacheAndConvert, 400);
-        setTimeout(checkCacheAndConvert, 1200);
+        setTimeout(checkCacheAndConvert, 500);
+        setTimeout(checkCacheAndConvert, 1500);
         
         $(document).on('click', '.fkcart-cart-btn, .cart-link, .header-cart-link', function() {
-            setTimeout(checkCacheAndConvert, 250);
+            setTimeout(checkCacheAndConvert, 300);
         });
         
         if (window.MutationObserver) {
@@ -388,7 +431,7 @@
                                 $(this).find('.fkcart-app').length > 0 ||
                                 $(this).hasClass('woocommerce-mini-cart') ||
                                 $(this).find('.woocommerce-mini-cart').length > 0) {
-                                setTimeout(checkCacheAndConvert, 150);
+                                setTimeout(checkCacheAndConvert, 200);
                             }
                         });
                     }
@@ -402,14 +445,17 @@
         }
     });
 
-    // ===== FUNNELKIT CHECKOUT CONVERSION =====
+    // ===== FUNNELKIT CHECKOUT CONVERSION (WITH PRICE HIDING) =====
     $(document).ready(function() {
         if ($('body').hasClass('wfacp_main_wrapper') || 
             $('.wfacp-form').length > 0 || 
             $('.wfacp_main_form').length > 0 ||
             $('.wfacp_order_summary').length > 0) {
             
+            console.log('🎯 FunnelKit checkout detected');
+            
             var convertAllCheckoutPrices = function() {
+                // ✅ HIDE prices immediately
                 $('.wfacp_order_summary .woocommerce-Price-amount, #place_order').css({
                     'visibility': 'hidden',
                     'opacity': '0'
@@ -417,6 +463,8 @@
                 
                 var cached = getCachedPrices();
                 if (!cached || !cached.prices) {
+                    console.log('❌ No cached prices');
+                    // Show prices anyway (better than nothing)
                     $('.wfacp_order_summary .woocommerce-Price-amount, #place_order').css({
                         'visibility': 'visible',
                         'opacity': '1'
@@ -492,6 +540,7 @@
                     converted++;
                 });
                 
+                // ✅ CONVERT PLACE ORDER BUTTON
                 var $placeOrderBtn = $('#place_order, button[name="woocommerce_checkout_place_order"]');
                 
                 if ($placeOrderBtn.length > 0 && $placeOrderBtn.data('btn-converted') !== currency) {
@@ -516,26 +565,30 @@
                     }
                 }
                 
+                console.log('✅ FunnelKit: Converted', converted, 'prices');
+                
+                // ✅ SHOW all prices (conversion complete)
                 $('.wfacp_order_summary .woocommerce-Price-amount, #place_order').css({
                     'visibility': 'visible',
                     'opacity': '1',
-                    'transition': 'opacity 0.2s ease'
+                    'transition': 'opacity 0.3s ease'
                 });
             };
             
-            setTimeout(convertAllCheckoutPrices, 200);
-            setTimeout(convertAllCheckoutPrices, 800);
+            setTimeout(convertAllCheckoutPrices, 300);
+            setTimeout(convertAllCheckoutPrices, 1000);
+            setTimeout(convertAllCheckoutPrices, 2000);
             
             $(document.body).on('updated_checkout wfacp_order_review_update payment_method_selected', function() {
-                setTimeout(convertAllCheckoutPrices, 400);
+                setTimeout(convertAllCheckoutPrices, 500);
             });
             
             $(document).on('change', 'input[name="payment_method"]', function() {
-                setTimeout(convertAllCheckoutPrices, 250);
+                setTimeout(convertAllCheckoutPrices, 300);
             });
             
             $(document).on('click', '.wfacp_apply_coupon, .wfacp_remove_coupon', function() {
-                setTimeout(convertAllCheckoutPrices, 1000);
+                setTimeout(convertAllCheckoutPrices, 1500);
             });
             
             if (window.MutationObserver) {
@@ -551,7 +604,7 @@
                     });
                     
                     if (shouldConvert) {
-                        setTimeout(convertAllCheckoutPrices, 250);
+                        setTimeout(convertAllCheckoutPrices, 300);
                     }
                 });
                 
