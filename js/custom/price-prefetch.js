@@ -480,51 +480,31 @@
     // MAIN INITIALIZATION
     // ═══════════════════════════════════════════════════════
     
-       function loadPrices() {
-        // ✅ Hide ALL prices immediately
-        $('[data-price-placeholder], .price, .woocommerce-Price-amount').css({
-            'visibility': 'hidden',
-            'min-height': '20px'
-        });
-        
-        var currency = getCurrentCurrency();
-        console.log('🌍 Detected currency: ' + currency);
+    function loadPrices() {
+        $('[data-price-placeholder]').css('visibility', 'hidden');
         
         var cachedRates = getCachedData('exchange_rates');
         var cachedPrices = getCachedData('base_prices');
         
         if (cachedRates && cachedPrices) {
-            console.log('✅ Using cached data');
             applyPrices();
             return;
         }
-        
-        console.log('🔄 Fetching from CDN');
         
         fetchFromCDN(function(success) {
             if (success) {
                 applyPrices();
             } else {
-                console.error('❌ Failed to load prices');
-                $('[data-price-placeholder]').css('visibility', 'visible').text('...');
+                $('[data-price-placeholder]').css('visibility', 'visible');
             }
         });
     }
-
     
-     $(document).ready(function() {
-        // ✅ Check if cached page
-        var servedFromCache = window.BETTERESTECH_PRICES_NEED_LOAD || false;
-        
-        if (servedFromCache) {
-            console.log('📦 Page from cache - hiding prices');
-        }
-        
+    $(document).ready(function() {
         loadPrices();
         
         // Cart fragments refresh
         $(document.body).on('wc_fragments_refreshed updated_cart_totals updated_checkout fkcart_fragment_refreshed', function() {
-
             setTimeout(convertCartPrices, 100);
         });
         
